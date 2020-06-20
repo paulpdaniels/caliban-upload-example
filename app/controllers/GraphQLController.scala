@@ -1,6 +1,5 @@
 package controllers
 
-import java.nio.file.Files
 import java.util.Locale
 
 import caliban.Value.NullValue
@@ -9,10 +8,10 @@ import play.api.http.Writeable
 import play.api.libs.json.{ JsValue, Json, Writes }
 import play.api.mvc._
 import services.ExampleEnv
-import upload.{ GraphQLUploadRequest, Uploads }
+import upload.{ FileMeta, GraphQLUploadRequest, Uploads }
 import zio.blocking.Blocking
-import zio.stream.ZStream
-import zio.{ CancelableFuture, Ref, Runtime, ZIO }
+import zio.random.Random
+import zio.{ random, Ref, Runtime, ZIO }
 
 import scala.concurrent.{ ExecutionContext, Future }
 import scala.util.Try
@@ -67,8 +66,8 @@ class GraphQLController(cc: ControllerComponents) extends AbstractController(cc)
   private def parsePath(path: String): List[Either[String, Int]] =
     path.split('.').map(c => Try(c.toInt).toEither.left.map(_ => c)).toList
 
-  private def uploadFormParser[R <: Blocking](
-    runtime: Runtime[Blocking]
+  private def uploadFormParser(
+    runtime: Runtime[Random]
   ): BodyParser[GraphQLUploadRequest] =
     parse.multipartFormData.validateM { form =>
       // First bit is always a standard graphql payload, it comes from the `operations` field
@@ -80,7 +79,6 @@ class GraphQLController(cc: ControllerComponents) extends AbstractController(cc)
 
       runtime.unsafeRunToFuture(
         (for {
-          blocking <- ZIO.environment[Blocking]
           operations <- ZIO
                          .fromTry(tryOperations)
                          .orElseFail(Results.BadRequest("Missing multipart field 'operations'"))
@@ -92,24 +90,40 @@ class GraphQLController(cc: ControllerComponents) extends AbstractController(cc)
             .toList
             .flatMap(kv => kv._2.map(kv._1 -> _))
           fileRef <- Ref.make(form.files.map(f => f.key -> f).toMap)
+          rand    <- ZIO.environment[Random]
         } yield
           GraphQLUploadRequest(
             operations,
             filePaths,
             Uploads.handler(
               handle =>
-                for {
-                  ref <- ZStream.fromEffectOption(fileRef.get.map(_.get(handle)).some)
-                  bytes <- ZStream
-                            .fromInputStream(Files.newInputStream(ref.ref.path))
-                            .provide(blocking)
-                } yield bytes
+                fileRef.get
+                  .map(_.get(handle))
+                  .some
+                  .flatMap(
+                    fp =>
+                      random
+                        .nextString(16)
+                        .asSomeError
+                        .map(
+                          FileMeta(
+                            _,
+                            fp.ref.path,
+                            fp.dispositionType,
+                            fp.contentType,
+                            fp.filename,
+                            fp.fileSize
+                          )
+                      )
+                  )
+                  .optional
+                  .provide(rand)
             )
           )).either
       )
     }(runtime.platform.executor.asEC)
 
-  private def makeParser(runtime: Runtime[Blocking]) =
+  private def makeParser(runtime: Runtime[Blocking with Random]) =
     parse.using { req =>
       implicit val ec: ExecutionContext = runtime.platform.executor.asEC
       req.contentType.map(_.toLowerCase(Locale.ENGLISH)) match {

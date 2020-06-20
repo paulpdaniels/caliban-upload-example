@@ -4,14 +4,18 @@ import caliban.Value.{ NullValue, StringValue }
 import caliban.schema.Annotations.GQLName
 import caliban.schema.{ ArgBuilder, Schema }
 import caliban.{ GraphQLRequest, InputValue }
+import zio.blocking.Blocking
 import zio.stream.{ ZSink, ZStream }
-import zio.{ Chunk, RIO, UIO }
+import zio.{ Chunk, RIO, UIO, URIO }
 
 @GQLName("Upload")
 sealed case class Upload(name: String) {
 
-  def allBytes: RIO[Uploads, Chunk[Byte]] =
+  val allBytes: RIO[Uploads with Blocking, Chunk[Byte]] =
     upload.stream(name).run(ZSink.foldLeftChunks(Chunk[Byte]())(_ ++ (_: Chunk[Byte])))
+
+  val meta: URIO[Uploads, Option[FileMeta]] =
+    upload.fileMeta(name)
 
 }
 

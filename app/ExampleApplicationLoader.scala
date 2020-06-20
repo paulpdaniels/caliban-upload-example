@@ -6,9 +6,7 @@ import play.api.{ Application, ApplicationLoader, BuiltInComponentsFromContext }
 import play.filters.cors.{ CORSConfig, CORSFilter }
 import services.{ ExampleApi, ExampleData, ExampleService }
 import zio.Runtime
-import zio.blocking.Blocking
-import zio.clock.Clock
-import zio.console.Console
+import zio.ZEnv
 import zio.internal.Platform
 
 class ExampleApplicationLoader extends ApplicationLoader {
@@ -19,9 +17,7 @@ class ExampleComponents(context: ApplicationLoader.Context) extends BuiltInCompo
 
   implicit val runtime = Runtime.unsafeFromLayer(
     ExampleService.make(ExampleData.sampleCharacters) ++
-      Console.live ++
-      Clock.live ++
-      Blocking.live,
+      ZEnv.live,
     Platform.default
   )
 

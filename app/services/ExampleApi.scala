@@ -3,21 +3,22 @@ package services
 import caliban.GraphQL.graphQL
 import caliban.ResponseValue.ObjectValue
 import caliban.schema.Annotations.{ GQLDeprecated, GQLDescription }
-import caliban.schema.{ ArgBuilder, GenericSchema, Schema }
-import caliban.wrappers.Wrappers.{ maxDepth, maxFields, printSlowQueries, timeout }
+import caliban.schema.{ ArgBuilder, GenericSchema }
 import caliban.wrappers.ApolloTracing.apolloTracing
+import caliban.wrappers.Wrappers.{ maxDepth, maxFields }
 import caliban.{ GraphQL, RootResolver }
 import services.ExampleData._
 import services.ExampleService.ExampleService
 import upload.{ Upload, Uploads }
-import zio.{ console, UIO, URIO }
+import zio.blocking.Blocking
 import zio.clock.Clock
 import zio.console.Console
 import zio.stream.ZStream
+import zio.{ console, UIO, URIO }
 
 import scala.language.postfixOps
 
-object ExampleApi extends GenericSchema[ExampleService with Uploads with Clock with Console] {
+object ExampleApi extends GenericSchema[ExampleService with Uploads with Clock with Console with Blocking] {
 
   case class ID(value: String) extends AnyVal
 
@@ -40,14 +41,14 @@ object ExampleApi extends GenericSchema[ExampleService with Uploads with Clock w
   implicit val charactersArgsSchema                              = gen[CharactersArgs]
 
   case class Mutations(
-    singleUpload: UploadFileArgs => URIO[Console with Uploads, File],
+    singleUpload: UploadFileArgs => URIO[Console with Uploads with Blocking, File],
     multipleUpload: UploadFilesArgs => UIO[Boolean]
   )
   case class Subscriptions(characterDeleted: ZStream[ExampleService, Nothing, String])
 
   implicit val mutationsSchema: Typeclass[Mutations] = gen[Mutations]
 
-  val api: GraphQL[Console with Clock with ExampleService with Uploads] =
+  val api: GraphQL[Console with Clock with ExampleService with Uploads with Blocking] =
     graphQL(
       RootResolver(
         Queries(
@@ -59,7 +60,8 @@ object ExampleApi extends GenericSchema[ExampleService with Uploads with Clock w
             (for {
               bytes <- args.file.allBytes
               _     <- console.putStrLn(new String(bytes.toArray))
-            } yield File(ID("a"), "blob.txt", "blob.txt", "txt")).orDie,
+              f     <- args.file.meta.someOrFailException
+            } yield File(ID(f.id), f.path.toString, f.fileName, f.dispositionType)).orDie,
           args => UIO.succeed(true)
         )
       )
